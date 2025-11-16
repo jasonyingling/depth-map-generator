@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import type { Pipeline, RawImage } from '@huggingface/transformers';
+	import * as THREE from 'three';
+	import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 	// State management using Svelte 5 runes
 	let selectedImage = $state<File | null>(null);
@@ -17,9 +19,24 @@
 	let contrast = $state(1.0);
 	let colorize = $state(true);
 
+	// 3D preview controls
+	let show3DPreview = $state(false);
+	let depthStrength = $state(0.3);
+	let autoRotate = $state(false);
+
 	// Store the raw depth data for adjustments
 	let rawDepthData = $state<ImageData | null>(null);
 	let depthEstimator = $state<Pipeline | null>(null);
+	let rawDepthImage: RawImage | null = null;
+
+	// Three.js references
+	let canvasContainer: HTMLDivElement;
+	let scene: THREE.Scene | null = null;
+	let camera: THREE.PerspectiveCamera | null = null;
+	let renderer: THREE.WebGLRenderer | null = null;
+	let controls: OrbitControls | null = null;
+	let mesh: THREE.Mesh | null = null;
+	let animationFrameId: number | null = null;
 
 	// File input reference
 	let fileInput: HTMLInputElement;
@@ -107,6 +124,9 @@
 
 			// Get the depth map (output.depth is a RawImage)
 			const depthImage = output.depth as RawImage;
+
+			// Store raw depth image for 3D preview
+			rawDepthImage = depthImage;
 
 			// Convert to canvas for display and manipulation
 			const canvas = document.createElement('canvas');
@@ -236,11 +256,170 @@
 		imagePreviewUrl = null;
 		depthMapUrl = null;
 		rawDepthData = null;
+		rawDepthImage = null;
 		error = null;
 		brightness = 1.0;
 		contrast = 1.0;
 		colorize = true;
+		show3DPreview = false;
+		cleanup3DScene();
 	}
+
+	// Initialize 3D scene
+	async function init3DScene() {
+		if (!browser || !canvasContainer || !imagePreviewUrl || !rawDepthImage) return;
+
+		// Clean up existing scene
+		cleanup3DScene();
+
+		// Create scene
+		scene = new THREE.Scene();
+		scene.background = new THREE.Color(0x1a1a1a);
+
+		// Create camera
+		camera = new THREE.PerspectiveCamera(
+			50,
+			canvasContainer.clientWidth / canvasContainer.clientHeight,
+			0.1,
+			1000
+		);
+		camera.position.z = 2;
+
+		// Create renderer
+		renderer = new THREE.WebGLRenderer({ antialias: true });
+		renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+		renderer.setPixelRatio(window.devicePixelRatio);
+		canvasContainer.appendChild(renderer.domElement);
+
+		// Add orbit controls
+		controls = new OrbitControls(camera, renderer.domElement);
+		controls.enableDamping = true;
+		controls.dampingFactor = 0.05;
+		controls.autoRotate = autoRotate;
+		controls.autoRotateSpeed = 2.0;
+
+		// Add lights
+		const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+		scene.add(ambientLight);
+
+		const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+		directionalLight.position.set(5, 5, 5);
+		scene.add(directionalLight);
+
+		// Load textures
+		const textureLoader = new THREE.TextureLoader();
+		const imageTexture = await new Promise<THREE.Texture>((resolve, reject) => {
+			textureLoader.load(imagePreviewUrl!, resolve, undefined, reject);
+		});
+
+		// Create depth texture from raw depth data
+		const depthCanvas = document.createElement('canvas');
+		depthCanvas.width = rawDepthImage.width;
+		depthCanvas.height = rawDepthImage.height;
+		const depthCtx = depthCanvas.getContext('2d');
+
+		if (depthCtx) {
+			const depthImageData = depthCtx.createImageData(depthCanvas.width, depthCanvas.height);
+			for (let i = 0; i < rawDepthImage.data.length; i++) {
+				const value = rawDepthImage.data[i];
+				depthImageData.data[i * 4] = value;
+				depthImageData.data[i * 4 + 1] = value;
+				depthImageData.data[i * 4 + 2] = value;
+				depthImageData.data[i * 4 + 3] = 255;
+			}
+			depthCtx.putImageData(depthImageData, 0, 0);
+		}
+
+		const depthTexture = new THREE.CanvasTexture(depthCanvas);
+
+		// Create plane geometry with high resolution for displacement
+		const geometry = new THREE.PlaneGeometry(2, 2, 256, 256);
+
+		// Create material with displacement
+		const material = new THREE.MeshStandardMaterial({
+			map: imageTexture,
+			displacementMap: depthTexture,
+			displacementScale: depthStrength,
+			roughness: 0.8,
+			metalness: 0.2
+		});
+
+		// Create mesh
+		mesh = new THREE.Mesh(geometry, material);
+		scene.add(mesh);
+
+		// Start animation loop
+		animate();
+	}
+
+	// Animation loop
+	function animate() {
+		if (!scene || !camera || !renderer || !controls) return;
+
+		animationFrameId = requestAnimationFrame(animate);
+
+		controls.update();
+		renderer.render(scene, camera);
+	}
+
+	// Update 3D scene when depth strength or auto-rotate changes
+	function update3DSettings() {
+		if (mesh && mesh.material instanceof THREE.MeshStandardMaterial) {
+			mesh.material.displacementScale = depthStrength;
+		}
+		if (controls) {
+			controls.autoRotate = autoRotate;
+		}
+	}
+
+	// Clean up 3D scene
+	function cleanup3DScene() {
+		if (animationFrameId !== null) {
+			cancelAnimationFrame(animationFrameId);
+			animationFrameId = null;
+		}
+
+		if (mesh) {
+			if (mesh.material instanceof THREE.Material) {
+				mesh.material.dispose();
+			}
+			if (mesh.geometry) {
+				mesh.geometry.dispose();
+			}
+			mesh = null;
+		}
+
+		if (controls) {
+			controls.dispose();
+			controls = null;
+		}
+
+		if (renderer) {
+			renderer.dispose();
+			if (renderer.domElement && canvasContainer) {
+				canvasContainer.removeChild(renderer.domElement);
+			}
+			renderer = null;
+		}
+
+		scene = null;
+		camera = null;
+	}
+
+	// Toggle 3D preview
+	function toggle3DPreview() {
+		show3DPreview = !show3DPreview;
+		if (show3DPreview) {
+			setTimeout(() => init3DScene(), 100);
+		} else {
+			cleanup3DScene();
+		}
+	}
+
+	// Cleanup on component destroy
+	onDestroy(() => {
+		cleanup3DScene();
+	});
 </script>
 
 <div class="container mx-auto px-4 py-8 max-w-7xl">
@@ -427,6 +606,78 @@
 		</div>
 	{/if}
 
+	<!-- 3D Preview Section -->
+	{#if depthMapUrl}
+		<div class="bg-white rounded-lg shadow-lg p-6 mb-8">
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="text-lg font-semibold">3D Preview</h3>
+				<button
+					onclick={toggle3DPreview}
+					class={`px-4 py-2 rounded-lg transition-colors ${
+						show3DPreview
+							? 'bg-red-600 hover:bg-red-700 text-white'
+							: 'bg-blue-600 hover:bg-blue-700 text-white'
+					}`}
+				>
+					{show3DPreview ? 'Close 3D Preview' : 'View in 3D'}
+				</button>
+			</div>
+
+			{#if show3DPreview}
+				<div class="space-y-4">
+					<!-- 3D Canvas Container -->
+					<div
+						bind:this={canvasContainer}
+						class="w-full h-[500px] bg-gray-900 rounded-lg overflow-hidden"
+					></div>
+
+					<!-- 3D Controls -->
+					<div class="space-y-4 bg-gray-50 p-4 rounded-lg">
+						<!-- Depth Strength -->
+						<div>
+							<div class="flex items-center justify-between mb-2">
+								<label for="depth-strength-slider" class="font-medium">Depth Strength</label>
+								<span class="text-sm text-gray-600">{depthStrength.toFixed(2)}</span>
+							</div>
+							<input
+								id="depth-strength-slider"
+								type="range"
+								min="0"
+								max="1.0"
+								step="0.05"
+								bind:value={depthStrength}
+								oninput={update3DSettings}
+								class="w-full"
+							/>
+						</div>
+
+						<!-- Auto Rotate -->
+						<div>
+							<label class="flex items-center gap-2">
+								<input
+									type="checkbox"
+									bind:checked={autoRotate}
+									onchange={update3DSettings}
+									class="w-4 h-4"
+								/>
+								<span class="font-medium">Auto Rotate</span>
+							</label>
+						</div>
+
+						<div class="text-sm text-gray-600 bg-blue-50 p-3 rounded">
+							<strong>💡 Tip:</strong> Click and drag to rotate, scroll to zoom, right-click and drag
+							to pan
+						</div>
+					</div>
+				</div>
+			{:else}
+				<p class="text-gray-600 text-center py-8">
+					Click "View in 3D" to see your image in 3D with depth displacement
+				</p>
+			{/if}
+		</div>
+	{/if}
+
 	<!-- Info Section -->
 	<div class="bg-blue-50 rounded-lg p-6">
 		<h3 class="text-lg font-semibold mb-2">About Depth Estimation</h3>
@@ -438,6 +689,8 @@
 			<li>Brighter/Red areas indicate objects farther from the camera</li>
 			<li>Darker/Blue areas indicate objects closer to the camera</li>
 			<li>Adjust brightness and contrast to enhance depth visualization</li>
+			<li>View your image in interactive 3D with depth displacement mapping</li>
+			<li>Rotate, zoom, and pan the 3D preview to explore depth from all angles</li>
 			<li>Download the depth map for use in 3D applications, visual effects, and more</li>
 		</ul>
 	</div>
