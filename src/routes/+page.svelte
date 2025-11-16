@@ -203,34 +203,24 @@
 	}
 
 	// Update depth map when sliders change
-	async function updateDepthMapVisualization() {
-		if (!rawDepthData || !depthEstimator || !selectedImage) return;
+	function updateDepthMapVisualization() {
+		if (!rawDepthImage) return;
 
-		try {
-			// Re-generate from original depth data
-			const imageUrl = URL.createObjectURL(selectedImage);
-			const output = await depthEstimator(imageUrl);
-			const depthImage = output.depth as RawImage;
+		// Use cached depth data instead of re-running the model
+		const canvas = document.createElement('canvas');
+		canvas.width = rawDepthImage.width;
+		canvas.height = rawDepthImage.height;
+		const ctx = canvas.getContext('2d');
 
-			const canvas = document.createElement('canvas');
-			canvas.width = depthImage.width;
-			canvas.height = depthImage.height;
-			const ctx = canvas.getContext('2d');
+		if (ctx) {
+			const imageData = ctx.createImageData(canvas.width, canvas.height);
+			applyDepthMapAdjustments(rawDepthImage.data, imageData, brightness, contrast, colorize);
+			ctx.putImageData(imageData, 0, 0);
 
-			if (ctx) {
-				const imageData = ctx.createImageData(canvas.width, canvas.height);
-				applyDepthMapAdjustments(depthImage.data, imageData, brightness, contrast, colorize);
-				ctx.putImageData(imageData, 0, 0);
-
-				if (depthMapUrl) {
-					URL.revokeObjectURL(depthMapUrl);
-				}
-				depthMapUrl = canvas.toDataURL('image/png');
+			if (depthMapUrl) {
+				URL.revokeObjectURL(depthMapUrl);
 			}
-
-			URL.revokeObjectURL(imageUrl);
-		} catch (err) {
-			console.error('Failed to update visualization:', err);
+			depthMapUrl = canvas.toDataURL('image/png');
 		}
 	}
 
@@ -558,7 +548,7 @@
 						max="2.0"
 						step="0.1"
 						bind:value={brightness}
-						onchange={updateDepthMapVisualization}
+						oninput={updateDepthMapVisualization}
 						class="w-full"
 					/>
 				</div>
@@ -576,7 +566,7 @@
 						max="3.0"
 						step="0.1"
 						bind:value={contrast}
-						onchange={updateDepthMapVisualization}
+						oninput={updateDepthMapVisualization}
 						class="w-full"
 					/>
 				</div>
@@ -587,7 +577,7 @@
 						<input
 							type="checkbox"
 							bind:checked={colorize}
-							onchange={updateDepthMapVisualization}
+							oninput={updateDepthMapVisualization}
 							class="w-4 h-4"
 						/>
 						<span class="font-medium">Colorize (Blue = Near, Red = Far)</span>
