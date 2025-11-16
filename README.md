@@ -10,6 +10,11 @@ An AI-powered web application that generates depth maps from images using the De
   - Brightness adjustment (0.1x - 2.0x)
   - Contrast adjustment (0.1x - 3.0x)
   - Color visualization toggle (Blue = near, Red = far)
+- **Interactive 3D Preview**: View your image in 3D with depth displacement mapping
+  - Rotate, zoom, and pan with mouse controls
+  - Adjustable depth strength (0-1.0)
+  - Auto-rotation mode for hands-free viewing
+  - Real-time WebGL rendering for smooth performance
 - **Side-by-side Comparison**: View original image and depth map simultaneously
 - **Download Capability**: Save generated depth maps as PNG files
 - **Fully Client-side**: All processing happens in the browser - no server required
@@ -19,6 +24,7 @@ An AI-powered web application that generates depth maps from images using the De
 
 - **Frontend**: SvelteKit 2.x with Svelte 5 (using runes)
 - **AI/ML**: Transformers.js 3.x with Depth Anything model
+- **3D Graphics**: Three.js 0.181.x with OrbitControls
 - **Styling**: Tailwind CSS 4.x
 - **Deployment**: Cloudflare Pages/Workers
 - **Language**: TypeScript (strict mode)
@@ -65,7 +71,15 @@ pnpm run dev
    - Use the **Contrast** slider to enhance depth differences
    - Toggle **Colorize** to switch between colored and grayscale depth maps
 
-4. **Download**:
+4. **View in 3D** (optional):
+   - Click "View in 3D" to see your image with depth displacement
+   - Click and drag to rotate the 3D model
+   - Scroll to zoom in/out
+   - Right-click and drag to pan
+   - Adjust **Depth Strength** to control the displacement intensity
+   - Enable **Auto Rotate** for automatic 360° viewing
+
+5. **Download**:
    - Click "Download Depth Map" to save the processed depth map to your device
 
 ## How It Works
